@@ -1,0 +1,151 @@
+{
+  "name": "AI Smartphone Inventory Prioritizer",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "8a17c83a-b5d5-4e78-b5f2-93cc6dfdf201",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "filePath": "/files/input/sample_inventory.csv"
+      },
+      "id": "3b3b48a1-523a-4d21-8b34-23f7708be202",
+      "name": "Read Inventory",
+      "type": "n8n-nodes-base.readBinaryFile",
+      "typeVersion": 1,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "operation": "fromFile",
+        "binaryPropertyName": "data",
+        "options": {
+          "headerRow": true
+        }
+      },
+      "id": "00c50caa-8d5a-49bb-b03b-d99e46a1a203",
+      "name": "Parse Inventory CSV",
+      "type": "n8n-nodes-base.spreadsheetFile",
+      "typeVersion": 2,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map((item) => {\n  const currentStock = Number(item.json.CurrentStock);\n  const averageDailySales = Number(item.json.AverageDailySales);\n  const supplierLeadDays = Number(item.json.SupplierLeadDays);\n  const stockCoverageDays = Number((currentStock / averageDailySales).toFixed(1));\n\n  let riskLevel = 'Low';\n  let priorityScore = 25;\n\n  if (stockCoverageDays <= supplierLeadDays) {\n    riskLevel = 'High';\n    priorityScore = 90;\n  } else if (stockCoverageDays <= supplierLeadDays * 1.5) {\n    riskLevel = 'Medium';\n    priorityScore = 60;\n  }\n\n  return {\n    json: {\n      ...item.json,\n      CurrentStock: currentStock,\n      AverageDailySales: averageDailySales,\n      SupplierLeadDays: supplierLeadDays,\n      UnitPrice: Number(item.json.UnitPrice),\n      StockCoverageDays: stockCoverageDays,\n      RiskLevel: riskLevel,\n      PriorityScore: priorityScore\n    }\n  };\n});"
+      },
+      "id": "b2f7381b-042c-4389-b312-677c2d73f204",
+      "name": "Calculate Metrics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [930, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map((item) => ({\n  json: {\n    ...item.json,\n    aiInput: `Review ${item.json.Brand} ${item.json.Model}. Stock coverage is ${item.json.StockCoverageDays} days and supplier lead time is ${item.json.SupplierLeadDays} days. Risk is ${item.json.RiskLevel}. Explain the priority and recommend a practical inventory action.`\n  }\n}));"
+      },
+      "id": "cb4b0f21-9fce-41e9-a2f8-a053d140f205",
+      "name": "Prepare AI Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1160, 300]
+    },
+    {
+      "parameters": {
+        "resource": "text",
+        "operation": "message",
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.6-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3.6-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "user",
+              "content": "={{ $json.aiInput }}\n\nReturn only valid JSON in this exact shape, keeping the supplied values unchanged: {\"Brand\": \"\", \"Model\": \"\", \"CurrentStock\": 0, \"AverageDailySales\": 0, \"SupplierLeadDays\": 0, \"StockCoverageDays\": 0, \"RiskLevel\": \"\", \"PriorityScore\": 0, \"Reason\": \"\", \"RecommendedAction\": \"\"}"
+            }
+          ]
+        },
+        "simplify": true,
+        "jsonOutput": true,
+        "options": {
+          "systemMessage": "You are an inventory analyst. Use the supplied metrics as facts. Do not recalculate or change coverage, risk, or priority score."
+        }
+      },
+      "id": "e2a5a79e-9ec1-4343-b16b-0dc9476af206",
+      "name": "Analyze Inventory",
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [1390, 300],
+      "notes": "Select a Google Gemini API credential after import. This node receives calculated inventory metrics and returns the explanation and action as JSON.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map((item) => {\n  const content = item.json.text ?? item.json.message?.content ?? item.json.content;\n\n  if (!content) {\n    throw new Error('The AI response did not include any content.');\n  }\n\n  return {\n    json: typeof content === 'string' ? JSON.parse(content) : content\n  };\n});"
+      },
+      "id": "03ef7b5a-48dc-472a-a8be-4cbf293bf207",
+      "name": "Format Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1620, 300]
+    },
+    {
+      "parameters": {
+        "resource": "sheet",
+        "operation": "append",
+        "authentication": "oAuth2",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "schema": []
+        },
+        "options": {
+          "locationDefine": {
+            "values": {
+              "headerRow": 1
+            }
+          },
+          "handlingExtraData": "ignoreIt"
+        }
+      },
+      "id": "cd97ab36-d28d-4ff8-86c3-9ca7d948f208",
+      "name": "Save to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1850, 300],
+      "notes": "Select a Google Sheets credential, spreadsheet, and sheet after import. Use the result field names as headers in row 1.",
+      "notesInFlow": true
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual Trigger": { "main": [[{ "node": "Read Inventory", "type": "main", "index": 0 }]] },
+    "Read Inventory": { "main": [[{ "node": "Parse Inventory CSV", "type": "main", "index": 0 }]] },
+    "Parse Inventory CSV": { "main": [[{ "node": "Calculate Metrics", "type": "main", "index": 0 }]] },
+    "Calculate Metrics": { "main": [[{ "node": "Prepare AI Input", "type": "main", "index": 0 }]] },
+    "Prepare AI Input": { "main": [[{ "node": "Analyze Inventory", "type": "main", "index": 0 }]] },
+    "Analyze Inventory": { "main": [[{ "node": "Format Result", "type": "main", "index": 0 }]] },
+    "Format Result": { "main": [[{ "node": "Save to Google Sheets", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "",
+  "meta": {},
+  "tags": []
+}
